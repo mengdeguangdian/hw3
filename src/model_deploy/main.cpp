@@ -1,5 +1,5 @@
 #include "accelerometer_handler.h"
-#include "config.h"
+#include "tfconfig.h"
 #include "magic_wand_model_data.h"
 
 #include "tensorflow/lite/c/common.h"
@@ -16,6 +16,10 @@
 #include "uLCD_4DGL.h"
 
 #include "stm32l475e_iot01_accelero.h"
+
+#include "MQTTNetwork.h"
+#include "MQTTmbed.h"
+#include "MQTTClient.h"
 
 #include <cmath>
 
@@ -43,6 +47,59 @@ float gravity_y = 0.0f;
 float gravity_z = 0.0f;
 float arccos = 0.0f;
 
+int event_num = 0;
+char buffer_send[3][100];
+
+WiFiInterface *wifi;
+volatile int message_num = 0;
+volatile int arrivedcount = 0;
+volatile bool closed = false;
+
+const char* topic = "Mbed";
+//NetworkInterface* net = wifi;
+//MQTTNetwork mqttNetwork(net);
+//MQTT::Client<MQTTNetwork, Countdown> client(mqttNetwork);
+//const char* host = "192.168.1.103";
+//SocketAddress sockAddr;
+
+//Thread mqtt_thread(osPriorityHigh);
+//EventQueue mqtt_queue;
+
+void messageArrived(MQTT::MessageData& md) {
+    MQTT::Message &message = md.message;
+    char msg[300];
+    sprintf(msg, "Message arrived: QoS%d, retained %d, dup %d, packetID %d\r\n", message.qos, message.retained, message.dup, message.id);
+    printf(msg);
+    ThisThread::sleep_for(1000ms);
+    char payload[300];
+    sprintf(payload, "Payload %.*s\r\n", message.payloadlen, (char*)message.payload);
+    printf(payload);
+    ++arrivedcount;
+}
+
+void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
+    message_num++;
+    MQTT::Message message;
+    char buff[100];
+    //sprintf(buff, "QoS0 Hello, Python! #%d", message_num);
+    for(int k = 0; k<3; k++){
+    strcpy(buff, buffer_send[k]);
+    message.qos = MQTT::QOS0;
+    message.retained = false;
+    message.dup = false;
+    message.payload = (void*) buff;
+    message.payloadlen = strlen(buff) + 1;
+    int rc = client->publish(topic, message);
+
+    printf("rc:  %d\r\n", rc);
+    printf("Puslish message: %s\r\n", buff);
+    }
+}
+
+void close_mqtt() {
+    closed = true;
+}
+
 // Create an area of memory to use for input, output, and intermediate arrays.
 // The size of this will depend on the model you're using, and may need to be
 // determined by experimentation.
@@ -55,6 +112,92 @@ void mode_select();
 void mode_up();
 void mode_down();
 void GUI_temp();
+int mqtt();
+  int mqtt(){
+    
+
+    
+    wifi = WiFiInterface::get_default_instance();
+    if (!wifi) {
+            printf("ERROR: No WiFiInterface found.\r\n");
+            return -1;
+    }
+
+    
+    printf("\nConnecting to %s...\r\n", MBED_CONF_APP_WIFI_SSID);
+    int ret = wifi->connect(MBED_CONF_APP_WIFI_SSID, MBED_CONF_APP_WIFI_PASSWORD, NSAPI_SECURITY_WPA_WPA2);
+    if (ret != 0) {
+            printf("\nConnection error: %d\r\n", ret);
+            return -1;
+    }
+
+
+    NetworkInterface* net = wifi;
+    MQTTNetwork mqttNetwork(net);
+    MQTT::Client<MQTTNetwork, Countdown> client(mqttNetwork);
+
+    //TODO: revise host to your IP
+    const char* host = "192.168.1.103";
+
+    printf("Connecting to TCP network...\r\n");
+
+    SocketAddress sockAddr;
+    sockAddr.set_ip_address(host);
+    sockAddr.set_port(1883);
+
+    printf("address is %s/%d\r\n", (sockAddr.get_ip_address() ? sockAddr.get_ip_address() : "None"),  (sockAddr.get_port() ? sockAddr.get_port() : 0) ); //check setting
+
+    int rc = mqttNetwork.connect(sockAddr);//(host, 1883);
+    if (rc != 0) {
+            printf("Connection error.");
+            return -1;
+    }
+    printf("Successfully connected!\r\n");
+
+    MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+    data.MQTTVersion = 3;
+    data.clientID.cstring = "Mbed";
+
+    if ((rc = client.connect(data)) != 0){
+            printf("Fail to connect MQTT\r\n");
+    }
+    if (client.subscribe(topic, MQTT::QOS0, messageArrived) != 0){
+            printf("Fail to subscribe\r\n");
+    }
+
+    //mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
+    //sw2.rise(mqtt_queue.event(&publish_message, &client));
+    //btn3.rise(&close_mqtt);
+
+    publish_message(&client);
+
+    /*int num = 0;
+    while (num != 5) {
+            client.yield(100);
+            ++num;
+    }
+
+    while (1) {
+            if (closed) break;
+            client.yield(500);
+            ThisThread::sleep_for(500ms);
+    }*/
+    //if(event_num == 2){
+    printf("Ready to close MQTT Network......\n");
+
+    if ((rc = client.unsubscribe(topic)) != 0) {
+            printf("Failed: rc from unsubscribe was %d\n", rc);
+    }
+    if ((rc = client.disconnect()) != 0) {
+    printf("Failed: rc from disconnect was %d\n", rc);
+    }
+
+    mqttNetwork.disconnect();
+    printf("Successfully closed!\n");
+    //}
+    return 0;
+  }
+
 // Return the result of the last prediction
 int PredictGesture(float* output) {
   // How many times the most recent gesture has been matched in a row
@@ -534,7 +677,7 @@ void DET_mode_init(){
 int DET_mode(){
   int16_t pDataXYZ[3] = {0};
   BSP_ACCELERO_Init(); 
-  int event_num = 0;
+  //int event_num = 0;
   float target_angle;
   if(selection_flag == 0) target_angle = 15.0;
   else if(selection_flag == 1) target_angle = 30.0;
@@ -557,8 +700,13 @@ int DET_mode(){
       uLCD.printf("%.1f",arccos);
 
       if(arccos >= target_angle){
-        printf("Tha angle is %.1f, which is larger than %.1f\n\r",arccos,target_angle);
-        if(event_num == 2) return 1;
+        sprintf(buffer_send[event_num],"Tha angle is %.1f, which is larger than %.1f\r\n",arccos,target_angle);
+        printf("%s",buffer_send[event_num]);
+        //mqtt();
+        if(event_num == 2) {
+          mqtt();
+          return 1;
+        }
         event_num++;
       }
       ThisThread::sleep_for(100ms);
@@ -594,6 +742,7 @@ void DET_Thread(Arguments *in, Reply *out){
         sprintf(strings, "/myled1/write 0");
         strcpy(buffer, strings);
         RPC::call(buffer, outbuf);
+        //mqtt();
     } else {
         out->putData("Failed to execute LED control.");
     }
