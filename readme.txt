@@ -1,5 +1,5 @@
 How to Configurate the circuit
-The ulcd should be connected to the mbed, the pins are +5v(5v), 
+The ulcd should be connected to the mbed, the pins are connected like lab5(ulcd)
 
 How to set the threshold angle
 1. Firstly, to compile the program, you need to be under dictionary /hw3/src/model_deploy
@@ -7,7 +7,7 @@ How to set the threshold angle
 to compile the program
 3. After that, enter the command $ sudo screen /dev/ttyACM0 to the screen, 
 then enter the command $ /GUI_Thread/run 3 1 to go to the GUI mode
-4. The led 3 will light to indicate the start of GUI mode
+4. The led3 will light to indicate the start of GUI mode
 5. In the GUI mode, you can make gestures to select different threshold angles(15°，30°，45° and 60°）
 6. The gesture "ring" represents shifting down, "slope" means shifting up the selected threshold angles
 7. Push the user button to select the angle
